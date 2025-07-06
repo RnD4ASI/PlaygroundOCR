@@ -4000,7 +4000,36 @@ class Generator:
                 # This case covers:
                 # 1. Specified HF model failed, and 'pass' was hit.
                 # 2. Specified model was not 'mistral' and not a validated 'huggingface' model initially.
-                logger.info(f"Attempting HuggingFace default OCR model '{current_model_for_fallback}' as fallback (previous attempt with '{model}' failed or model type was unhandled/invalid).")
+current_model_for_fallback = self.default_hf_ocr_model
+            if model and model != current_model_for_fallback:
+                # This case covers:
+                # 1. Specified HF model failed, and 'pass' was hit.
+                # 2. Specified model was not 'mistral' and not a validated 'huggingface' model initially.
+                logger.info("Attempting HuggingFace default OCR model '{}' as fallback (previous attempt with '{}' failed or model type was unhandled/invalid).".format(current_model_for_fallback, model))  # import html
+            elif not model: # model was None from the start
+                 logger.info("Model not specified, using HuggingFace default model '{}' for OCR.".format(current_model_for_fallback))  # import html
+            # If 'model' was specified and IS current_model_for_fallback, and it failed the first try, this path is still hit.
+            # The log above would already indicate it's a fallback for itself, which is acceptable.
+
+            try:
+                self._get_hf_ocr(model=current_model_for_fallback,
+                                pdf_file_path=pdf_file_path,
+                                output_file=output_file,
+                                output_format=output_format)
+                logger.info("Successfully got OCR from HuggingFace default model ('{}'}.".format(current_model_for_fallback))  # import html
+                return None
+            except Exception as e_default:
+                # If the default model itself fails here, it means all paths (specific model, then default model) have failed.
+                logger.error("HuggingFace default OCR model ('{}') also failed: {}".format(current_model_for_fallback, e_default), exc_info=True)  # import html
+                raise e_default # Re-raise the specific error from the default model's attempt.
+
+        except Exception as e:
+            # This top-level except handles:
+            # - Initial validation error for default_hf_ocr_model.
+            # - Failure of Mistral model if it was tried and raised.
+            # - Failure of the default HF model if it was tried and raised (and not caught by a more specific except).
+            logger.error("OCR processing ultimately failed: {}".format(str(e)), exc_info=True)  # import html
+            raise
             elif not model: # model was None from the start
                  logger.info(f"Model not specified, using HuggingFace default model '{current_model_for_fallback}' for OCR.")
             # If 'model' was specified and IS current_model_for_fallback, and it failed the first try, this path is still hit.
