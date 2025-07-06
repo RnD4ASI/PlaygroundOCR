@@ -4152,7 +4152,229 @@ def _get_hf_ocr(self,
             raise ValueError("PDF file path must be provided")
 
         if not self._validate_model(model, "ocr", "huggingface"):
-            logger.warning(f"The HuggingFace OCR model '{model}' is not in the validated list in config_model.json. This may lead to unexpected behavior if it requires special handling not implemented in the generic path.")
+def _get_hf_ocr(self,
+                    model: str,
+                    pdf_file_path: str,
+                    output_file: str,
+                    output_format: str) -> None:
+        """
+        Convert PDF file to text using a specified HuggingFace OCR model.
+        Handles general HuggingFace OCR models (like GOT-OCR) and specific ones (like Nanonets).
+
+        Parameters:
+            model (str): Specific HuggingFace OCR model name to use.
+            pdf_file_path (str): Path to the PDF file.
+            output_file (str): Path to save the OCR output.
+            output_format (str): Desired output format ("markdown", "text", etc.).
+
+        Raises:
+            ValueError: If pdf_file_path is not provided or if the model_name_to_use is invalid.
+            Exception: For underlying OCR processing or model loading errors.
+        """
+        if not pdf_file_path:
+            logger.error("PDF file path must be provided for HuggingFace OCR.")
+            raise ValueError("PDF file path must be provided")
+
+        if not self._validate_model(model, "ocr", "huggingface"):
+            # import html  # Used for HTML escaping to prevent log injection
+            logger.warning(f"The HuggingFace OCR model '{html.escape(model)}' is not in the validated list in config_model.json. This may lead to unexpected behavior if it requires special handling not implemented in the generic path.")
+            # Allow proceeding, but the warning is important.
+
+        logger.info(f"Performing OCR with HuggingFace model: {html.escape(model)} on {html.escape(pdf_file_path)} with format: {html.escape(output_format)}")
+
+        model_path = os.path.join(self.hf_model_dir, model)
+        all_page_texts = []
+        temp_image_path = None # For cleanup in finally block
+
+        try:
+            from PIL import Image # Ensure PIL is imported here for both paths
+            images = convert_from_path(pdf_file_path)
+
+            if not images:
+                logger.warning(f"No images were extracted from PDF: {html.escape(pdf_file_path)}")
+                if output_file:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write("")
+                    logger.info(f"Created empty output file at {html.escape(output_file)}.")
+                return None
+
+            logger.info(f"Extracted {len(images)} page(s) from '{html.escape(pdf_file_path)}'. Processing with HuggingFace OCR model {html.escape(model)}...")
+
+            if model == "nanonets/Nanonets-OCR-s":
+                # Nanonets-specific logic
+                logger.debug(f"Using Nanonets-specific path for model {html.escape(model)}")
+                nanonets_model_instance = AutoModelForImageTextToText.from_pretrained(
+                    model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+                )
+                nanonets_model_instance.eval()
+                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+                logger.info(f"Successfully loaded Nanonets model, tokenizer, and processor from {html.escape(model_path)}.")
+
+                nanonets_prompt = """Extract the text from the above document as if you were reading it naturally. Return the tables in html format. Return the equations in LaTeX representation. If there is an image in the document and image caption is not present, add a small description of the image inside the <img></img> tag; otherwise, add the image caption inside <img></img>. Watermarks should be wrapped in brackets. Ex: <watermark>OFFICIAL COPY</watermark>. Page numbers should be wrapped in brackets. Ex: <page_number>14</page_number> or <page_number>9/22</page_number>. Prefer using ☐ and ☑ for check boxes."""
+
+                for i, pil_image in enumerate(images):
+                    page_num = i + 1
+                    logger.debug(f"Processing page {page_num}/{len(images)} with Nanonets model.")
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img_file:
+                            pil_image.save(tmp_img_file.name, format='PNG')
+                            temp_image_path = tmp_img_file.name
+
+                        messages = [
+                            {"role": "system", "content": "You are a helpful assistant."},
+                            {"role": "user", "content": [
+                                {"type": "image", "image": f"file://{temp_image_path}"},
+                                {"type": "text", "text": nanonets_prompt},
+                            ]},
+                        ]
+                        text_prompt_for_processor = processor.apply_chat_template(
+                            messages, tokenize=False, add_generation_prompt=True
+                        )
+                        inputs = processor(
+                            text=[text_prompt_for_processor], images=[pil_image], padding=True, return_tensors="pt"
+                        )
+                        inputs = inputs.to(nanonets_model_instance.device)
+                        output_ids = nanonets_model_instance.generate(**inputs, max_new_tokens=8192, do_sample=False)
+                        current_input_ids = inputs.input_ids[0]
+                        current_output_ids = output_ids[0]
+                        generated_part_ids = current_output_ids[len(current_input_ids):]
+                        page_text = processor.decode(generated_part_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    finally:
+                        if temp_image_path and os.path.exists(temp_image_path):
+                            os.remove(temp_image_path)
+                            temp_image_path = None # Reset for next iteration or final cleanup
+
+                    # Common page text processing logic (moved outside individual try-finally for page)
+                    if page_text.strip():
+                        if output_format == "markdown":
+                            if len(images) > 1: all_page_texts.append(f"
+
+---
+
+Page {page_num}
+
+---
+
+{page_text.strip()}")
+                            else: all_page_texts.append(page_text.strip())
+                        elif output_format == "text": # and other formats
+                            if len(images) > 1: all_page_texts.append(f"Page {page_num}:
+{page_text.strip()}
+")
+                            else: all_page_texts.append(page_text.strip())
+                        else: # Default to text
+                            if len(images) > 1: all_page_texts.append(f"Page {page_num}:
+{page_text.strip()}
+")
+                            else: all_page_texts.append(page_text.strip())
+                    else:
+                        logger.warning(f"Nanonets OCR returned no text for page {page_num}.")
+                        if output_format == "markdown":
+                            if len(images) > 1: all_page_texts.append(f"
+
+---
+
+Page {page_num}
+
+---
+
+[No text extracted]
+")
+                        else:
+                            if len(images) > 1: all_page_texts.append(f"Page {page_num}:
+[No text extracted]
+")
+
+
+            else: # Generic OCR model path (e.g. GOT-OCR2_0)
+                logger.debug(f"Using generic OCR path for model {html.escape(model)}")
+                tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+                    tokenizer.pad_token = tokenizer.eos_token
+
+                hf_model_instance = AutoModel.from_pretrained(
+                    model_path, trust_remote_code=True, low_cpu_mem_usage=True, device_map='auto', use_safetensors=True,
+                )
+                hf_model_instance = hf_model_instance.eval()
+                logger.info(f"Successfully loaded generic HuggingFace model '{html.escape(model)}' and tokenizer.")
+
+                for i, pil_image in enumerate(images):
+                    page_num = i + 1
+                    logger.debug(f"Processing page {page_num}/{len(images)} with {html.escape(model)} (generic logic).")
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img_file:
+                            pil_image.save(tmp_img_file.name, format='PNG')
+                            temp_image_path = tmp_img_file.name
+
+                        page_text_result = hf_model_instance.chat(tokenizer, temp_image_path, ocr_type="ocr")
+                        page_text = page_text_result if isinstance(page_text_result, str) else str(page_text_result)
+                    finally:
+                        if temp_image_path and os.path.exists(temp_image_path):
+                            os.remove(temp_image_path)
+                            temp_image_path = None # Reset
+
+                    if page_text.strip():
+                        if output_format == "markdown":
+                            if len(images) > 1: all_page_texts.append(f"
+
+## Page {page_num}
+
+{page_text.strip()}
+
+")
+                            else: all_page_texts.append(page_text.strip())
+                        elif output_format == "text":
+                            if len(images) > 1: all_page_texts.append(f"--- Page {page_num} ---
+{page_text.strip()}
+")
+                            else: all_page_texts.append(page_text.strip())
+                        else: # Default to text
+                            if len(images) > 1: all_page_texts.append(f"Page {page_num}:
+{page_text.strip()}
+")
+                            else: all_page_texts.append(page_text.strip())
+                    else:
+                        logger.warning(f"Generic OCR returned no text for page {page_num} of '{html.escape(pdf_file_path)}' using {html.escape(model)}.")
+                        if output_format == "markdown":
+                            if len(images) > 1: all_page_texts.append(f"
+
+## Page {page_num}
+
+[No text extracted]
+
+")
+                        else:
+                             if len(images) > 1: all_page_texts.append(f"--- Page {page_num} ---
+[No text extracted]
+")
+
+            # Final assembly and writing to file (common to both paths if successful)
+            if output_format == "json": # Though JSON population above is commented out
+                final_output_content = json.dumps(all_page_texts, indent=2) if isinstance(all_page_texts, list) and all_page_texts and isinstance(all_page_texts[0], dict) else "JSON output format not fully implemented for this model path or data."
+                logger.warning("JSON output format for generic OCR is not fully implemented or data was not structured for it.")
+            elif output_format == "markdown":
+                 final_output_content = "".join(all_page_texts).strip() # Markdown typically joined without extra newlines if page separators handle it
+            else: # text or default
+                final_output_content = "
+".join(all_page_texts).strip()
+
+            if output_file:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(final_output_content)
+                logger.info(f"Successfully saved HuggingFace OCR output to {html.escape(output_file)} for model {html.escape(model)}")
+            else:
+                logger.warning(f"No output_file was specified for HuggingFace OCR (model {html.escape(model)}). Text not saved.")
+
+        except Exception as e:
+            logger.error(f"Overall HuggingFace OCR processing failed for model '{html.escape(model)}' on file '{html.escape(pdf_file_path)}': {e}", exc_info=True)
+            if output_file:
+                try:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write(f"[Error during OCR processing for model {html.escape(model)}: {html.escape(str(e))}]")
+                except Exception as write_err:
+                    logger.error(f"Failed to write error to output file {html.escape(output_file)}: {write_err}")
+            raise # Re-raise the exception to be caught by the calling get_ocr method
             # Allow proceeding, but the warning is important.
 
         logger.info(f"Performing OCR with HuggingFace model: {model} on {pdf_file_path} with format: {output_format}")
