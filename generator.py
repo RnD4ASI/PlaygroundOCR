@@ -4159,7 +4159,7 @@ class Generator:
                     # Common page text processing logic (moved outside individual try-finally for page)
                     if page_text.strip():
                         if output_format == "markdown":
-                            if len(images) > 1: all_page_texts.append(f"\n\n---\n\nPage {page_num}\n\n---\n\n{page_text.strip()}")
+                            if len(images) > 1: all_page_texts.append(f"\n\n## Page {page_num}\n\n{page_text.strip()}\n\n")
                             else: all_page_texts.append(page_text.strip())
                         elif output_format == "text": # and other formats
                             if len(images) > 1: all_page_texts.append(f"Page {page_num}:\n{page_text.strip()}\n")
