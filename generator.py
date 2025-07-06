@@ -4379,7 +4379,15 @@ Page {page_num}
 
         logger.info(f"Performing OCR with HuggingFace model: {model} on {pdf_file_path} with format: {output_format}")
 
-        model_path = os.path.join(self.hf_model_dir, model)
+logger.info(f"Performing OCR with HuggingFace model: {model} on {pdf_file_path} with format: {output_format}")
+
+        # import os.path  # Used for secure path joining
+        model_path = os.path.normpath(os.path.join(self.hf_model_dir, model))
+        if not model_path.startswith(os.path.normpath(self.hf_model_dir)):
+            raise ValueError("Invalid model path")
+
+        all_page_texts = []
+        temp_image_path = None # For cleanup in finally block
         all_page_texts = []
         temp_image_path = None # For cleanup in finally block
 
