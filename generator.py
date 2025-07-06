@@ -4403,7 +4403,14 @@ logger.info(f"Performing OCR with HuggingFace model: {model} on {pdf_file_path} 
                     logger.info(f"Created empty output file at {output_file}.")
                 return None
 
-            logger.info(f"Extracted {len(images)} page(s) from '{pdf_file_path}'. Processing with HuggingFace OCR model {model}...")
+logger.info(f"Created empty output file at {output_file}.")
+                return None
+
+            # import html  # For HTML escaping
+            logger.info(f"Extracted {len(images)} page(s) from '{html.escape(pdf_file_path)}'. Processing with HuggingFace OCR model {html.escape(model)}...")
+
+            if model == "nanonets/Nanonets-OCR-s":
+                # Nanonets-specific logic
 
             if model == "nanonets/Nanonets-OCR-s":
                 # Nanonets-specific logic
