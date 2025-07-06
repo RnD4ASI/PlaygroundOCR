@@ -4132,7 +4132,13 @@ nanonets_model_instance.eval()
 
                 for i, pil_image in enumerate(images):
                     page_num = i + 1
-                    logger.debug(f"Processing page {page_num}/{len(images)} with Nanonets model.")
+for i, pil_image in enumerate(images):
+                    page_num = i + 1
+                    # Use string formatting to avoid potential log injection
+                    logger.debug("Processing page %d/%d with Nanonets model.", page_num, len(images))
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img_file:
+                            pil_image.save(tmp_img_file.name, format='PNG')
                     try:
                         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img_file:
                             pil_image.save(tmp_img_file.name, format='PNG')
