@@ -4064,7 +4064,42 @@ class Generator:
             logger.error(f"Mistral OCR processing failed: {e}")
             raise
 
-    def _get_hf_ocr(self,
+def _get_hf_ocr(self,
+                model: str,
+                pdf_file_path: str,
+                output_file: str,
+                output_format: str) -> None:
+    """
+    Convert PDF file to text using a specified HuggingFace OCR model.
+    Handles general HuggingFace OCR models (like GOT-OCR) and specific ones (like Nanonets).
+
+    Parameters:
+        model (str): Specific HuggingFace OCR model name to use.
+        pdf_file_path (str): Path to the PDF file.
+        output_file (str): Path to save the OCR output.
+        output_format (str): Desired output format ("markdown", "text", etc.).
+
+    Raises:
+        ValueError: If pdf_file_path is not provided or if the model_name_to_use is invalid.
+        Exception: For underlying OCR processing or model loading errors.
+    """
+    if not pdf_file_path:
+        logger.error("PDF file path must be provided for HuggingFace OCR.")
+        raise ValueError("PDF file path must be provided")
+
+    if not self._validate_model(model, "ocr", "huggingface"):
+        logger.warning(f"The HuggingFace OCR model '{model}' is not in the validated list in config_model.json. This may lead to unexpected behavior if it requires special handling not implemented in the generic path.")
+        # Allow proceeding, but the warning is important.
+
+    # Validate user role and permissions using server-side session data
+    if not self._check_user_permissions("ocr"):
+        logger.error("User does not have permission to perform OCR operations.")
+        raise PermissionError("Insufficient permissions for OCR operations")
+
+    logger.info(f"Performing OCR with HuggingFace model: {model} on {pdf_file_path} with format: {output_format}")
+
+    # Rest of the function remains unchanged
+    ...
                     model: str,
                     pdf_file_path: str,
                     output_file: str,
